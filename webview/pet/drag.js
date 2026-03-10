@@ -42,6 +42,11 @@
     wrapper.style.bottom = 'auto';
   }
 
+  function onUp(e) {
+    if (!dragging) return;
+    dragging = false;
+    wrapper.style.transition = '';
+  }
 
   wrapper.addEventListener('mousedown', onDown);
   window.addEventListener('mousemove', onMove);

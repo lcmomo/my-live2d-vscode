@@ -4,7 +4,6 @@
  */
 (function () {
   /* ---- VS Code API ---- */
-  var vscode = acquireVsCodeApi();
 
   /* ---- State ---- */
   var app, model;
@@ -80,7 +79,7 @@
     if (window.PetSpeech) window.PetSpeech.setTTS(cfg.tts !== false);
   }
 
-  /* ---- Load (or reload) model ---- */
+  /* ---- Load (or reload) model using PIXI.live2d ---- */
   async function loadModel(url, w, h) {
     showLoading();
     try {
@@ -91,79 +90,41 @@
         model = null;
       }
 
-      // Determine scale: pixi-live2d-display auto-scales, so we set via a bounding box
-      var targetW = w || config.modelWidth || 300;
-      var targetH = h || config.modelHeight || 380;
+      // Load Live2D model using PIXI.live2d
+      console.log('[PetJS] Initializing PIXI.Live2DModel...', PIXI);
+      const live2DModel = await PIXI.live2d.Live2DModel.from(url);
 
-      app.renderer.resize(targetW, targetH);
-      app.view.width  = targetW;
-      app.view.height = targetH;
-      app.view.style.width  = targetW + 'px';
-      app.view.style.height = targetH + 'px';
-
-      model = await PIXI.live2d.Live2DModel.from(url, { autoInteract: false });
-
-      // Scale to fit
-      var scaleX = targetW / model.width;
-      var scaleY = targetH / model.height;
-      var scale  = Math.min(scaleX, scaleY) * 0.95;
-      model.scale.set(scale);
-      model.x = (targetW - model.width) / 2;
-      model.y = (targetH - model.height) / 2;
-
-      // Mouse interaction
-      model.interactive = true;
-      model.buttonMode  = true;
-
-      model.on('pointerover', function () {
-        if (window.PetActions) window.PetActions.playForContext('wave');
-      });
-      model.on('pointerdown', function (e) {
-        if (window.PetActions) window.PetActions.playForContext('tap');
-        if (window.PetExpressions) window.PetExpressions.playRandom();
-        var msgs = [
-          '主人在逗我吗？(o^▽^o)',
-          '嘿嘿，主人点我干什么～',
-          '呀！主人好坏！(>ω<)',
-          '嘤嘤嘤，轻点啦！',
-          '主人喜欢我吗？✨',
-        ];
-        if (window.PetSpeech) {
-          window.PetSpeech.say(msgs[Math.floor(Math.random() * msgs.length)]);
-        }
-      });
-      model.on('pointerout', function () {
-        if (window.PetActions) window.PetActions.playForContext('idle');
-      });
-
-      // Mouse tracking
-      app.ticker.add(function () {
-        if (model && window._mouseX !== undefined) {
-          model.focus(window._mouseX, window._mouseY);
-        }
-      });
-
-      app.stage.addChild(model);
-      window.petApp = { app: app, model: model };
-
-      if (window.PetActions) window.PetActions.startIdleLoop();
-      if (window.PetExpressions) {
-        setInterval(function () { window.PetExpressions.playRandom(); }, 30000);
+      if (!live2DModel) {
+        throw new Error('Failed to load Live2D model. Model is null.');
       }
+
+      // Determine scale: fit the model to the canvas
+      const targetW = w || config.modelWidth || 300;
+      const targetH = h || config.modelHeight || 380;
+      const scaleX = targetW / live2DModel.width;
+      const scaleY = targetH / live2DModel.height;
+      const scale = Math.min(scaleX, scaleY) * 0.95;
+
+      live2DModel.scale.set(scale);
+      live2DModel.x = (targetW - live2DModel.width) / 2;
+      live2DModel.y = (targetH - live2DModel.height) / 2;
+
+      // Add interaction
+      live2DModel.interactive = true;
+      live2DModel.buttonMode = true;
+      live2DModel.on('pointerdown', () => {
+        console.log('Model clicked!');
+      });
+
+      app.stage.addChild(live2DModel);
+      model = live2DModel;
 
       hideLoading();
-      if (window.PetSpeech && config.talk) {
-        var greets = [
-          '你好呀主人！(✿◠‿◠)',
-          '主人来了！今天也要加油哦～',
-          '我是 ' + currentModelName + '！请多关照！',
-        ];
-        window.PetSpeech.say(greets[Math.floor(Math.random() * greets.length)]);
-      }
+      console.log('[PetJS] Model loaded successfully');
     } catch (err) {
       hideLoading();
       console.error('[PetJS] Model load error:', err);
-      showError('模型加载失败，请检查网络连接。');
+      showError('模型加载失败，请检查网络连接或模型文件。');
     }
   }
 
@@ -345,7 +306,8 @@
 
     // Load default model immediately (will be overwritten by 'init' message)
     showLoading();
-    loadModel(MODEL_BASE + 'Haru/Haru.model3.json', 300, 380);
+    setTimeout(() => {    loadModel(MODEL_BASE + 'shizuku-48/index.json', 300, 380);});
+    
   }
 
   /* ---- Boot ---- */
