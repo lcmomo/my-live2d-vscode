@@ -65,7 +65,6 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
   closeBtn.addEventListener("click", function () { panel.classList.add("hidden"); });
-  if (openBtn) openBtn.addEventListener("click", function () { panel.classList.toggle("hidden"); });
 
   /* ---- greeting ---- */
   var greetings = [

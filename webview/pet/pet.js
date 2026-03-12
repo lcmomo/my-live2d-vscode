@@ -115,16 +115,75 @@
       // Add interaction
       live2DModel.interactive = true;
       live2DModel.buttonMode = true;
-      live2DModel.on('pointerdown', () => {
-        console.log('Model clicked!');
+
+      // Click: play action + expression + speech
+      live2DModel.on('pointerdown', function () {
+        if (window.PetActions) window.PetActions.playForContext('tap');
+        if (window.PetExpressions) window.PetExpressions.playRandom();
+        if (window.PetSpeech && defaultConfig.talk) {
+          var phrases = [
+            '嗯？主人有什么事吗？(◕ᴗ◕)',
+            '哎呀～不要随便戳我嘛！',
+            '嘿嘿～主人喜欢我对不对～',
+            '呀！吓我一跳！(*°∀°)',
+            '主人！干嘛啦～',
+            '(害羞) 主人不要这样嘛...',
+          ];
+          window.PetSpeech.say(phrases[Math.floor(Math.random() * phrases.length)]);
+        }
+      });
+
+      // Hover: occasional shy comment
+      live2DModel.on('pointerover', function () {
+        if (Math.random() < 0.2 && window.PetSpeech && defaultConfig.talk) {
+          var hovers = [
+            '主人看我干嘛～',
+            '(小声) 不要盯着我嘛...',
+            '嗯？有什么事吗？',
+            '主人～有话直说哦！',
+          ];
+          window.PetSpeech.say(hovers[Math.floor(Math.random() * hovers.length)]);
+        }
       });
 
       app.stage.addChild(live2DModel);
       model = live2DModel;
       window.petApp.model = model;
 
+      // Extract real motion groups & expression names for accurate playback
+      try {
+        var settings = model.internalModel && model.internalModel.modelSettings;
+        if (settings) {
+          var motionObj = settings.Motions || settings.motions || {};
+          window.petApp.motionGroups = Object.keys(motionObj);
+          var exprArr = settings.Expressions || settings.expressions || [];
+          window.petApp.expressionNames = exprArr.map(function(e) { return e.Name || e.name || ''; }).filter(Boolean);
+          console.log('[PetJS] Motion groups:', window.petApp.motionGroups);
+          console.log('[PetJS] Expressions:', window.petApp.expressionNames);
+        }
+      } catch(ex) {
+        window.petApp.motionGroups = [];
+        window.petApp.expressionNames = [];
+      }
+
       hideLoading();
       console.log('[PetJS] Model loaded successfully');
+
+      // Greeting after load
+      setTimeout(function () {
+        if (window.PetSpeech && defaultConfig.talk) {
+          var greetings = [
+            '你好呀主人！今天也一起加油哦～(*ﾟ▽ﾟ*)',
+            '主人好！有我在，bug 都会消失的！',
+            '嗨嗨！今天也要好好写代码呢！',
+            '主人你来了！(´▽｀)',
+            '欢迎回来！主人今天辛苦了～',
+          ];
+          window.PetSpeech.say(greetings[Math.floor(Math.random() * greetings.length)]);
+        }
+        if (window.PetActions) window.PetActions.playForContext('wave');
+        if (window.PetActions) window.PetActions.startIdleLoop();
+      }, 600);
     } catch (err) {
       hideLoading();
       console.error('[PetJS] Model load error:', err);
@@ -166,9 +225,10 @@
         item.textContent = name;
         item.addEventListener('click', function () {
           currentModelName = name;
-          var url = MODEL_BASE + name + '/' + name + '.model3.json';
+          var url = MODEL_URL_MAP[name] || (MODEL_BASE + name + '/' + name + '.model3.json');
           loadModel(url, defaultConfig.modelWidth, defaultConfig.modelHeight);
           picker.classList.add('hidden');
+          renderList('');
           if (window.PetSpeech) window.PetSpeech.say('正在加载模型 ' + name + '...');
         });
         listEl.appendChild(item);
@@ -189,6 +249,12 @@
         if (!picker.classList.contains('hidden')) renderList('');
       });
     }
+
+    // Expose so init handler can refresh after model list is loaded
+    window.modelPickerRefresh = function () {
+      if (countEl) countEl.textContent = MODELS.length;
+      renderList(searchEl ? searchEl.value : '');
+    };
   }
 
   /* ---- Toolbar buttons ---- */
@@ -229,22 +295,43 @@
       case 'init':
         if (msg.config) {
           applyConfig(msg);
-          loadModel(getModelUrl(msg.config), msg.config.modelWidth, msg.config.modelHeight);
+          if (window.modelPickerRefresh) window.modelPickerRefresh();
+          // Respect initial visibility flag sent from extension
+          if (msg.visible === false) {
+            wrapper.style.display = 'none';
+          } else {
+            wrapper.style.display = '';
+            loadModel(getModelUrl(msg.config), msg.config.modelWidth, msg.config.modelHeight);
+          }
+        }
+        break;
+
+      case 'petVisibility':
+        if (msg.visible) {
+          wrapper.style.display = '';
+          // If the model was never loaded (because it was hidden on init), load it now
+          if (!model) {
+            loadModel(getModelUrl(defaultConfig), defaultConfig.modelWidth, defaultConfig.modelHeight);
+          }
+        } else {
+          wrapper.style.display = 'none';
         }
         break;
 
       case 'configUpdate':
         if (msg.config) {
           applyConfig(msg);
+          if (window.modelPickerRefresh) window.modelPickerRefresh();
           loadModel(getModelUrl(msg.config), msg.config.modelWidth, msg.config.modelHeight);
         }
         break;
 
       case 'nextModel': {
         var idx = MODELS.indexOf(currentModelName);
-        var nextName = MODELS[(idx + 1) % MODELS.length];
+        var nextIdx = (idx + 1) % MODELS.length;
+        var nextName = MODELS[nextIdx];
         currentModelName = nextName;
-        var url = MODEL_BASE + nextName + '/' + nextName + '.model3.json';
+        var url = MODEL_URL_MAP[nextName] || (MODEL_BASE + nextName + '/' + nextName + '.model3.json');
         loadModel(url, defaultConfig.modelWidth, defaultConfig.modelHeight);
         if (window.PetSpeech) window.PetSpeech.say('切换到 ' + nextName + ' 啦！');
         break;

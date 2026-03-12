@@ -26,6 +26,16 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "views": {
+      "panel": [
+        {
+          "type": "webview",
+          "id": "live2dPetView",
+          "name": "Live2D \u684c\u5ba0",
+          "visibility": "visible"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "live2d.start",
@@ -34,6 +44,10 @@
       {
         "command": "live2d.hide",
         "title": "Live2D Pet: 隐藏桌宠"
+      },
+      {
+        "command": "live2d.toggle",
+        "title": "Live2D Pet: 切换桌宠显示/隐藏"
       },
       {
         "command": "live2d.nextModel",
@@ -51,7 +65,7 @@
           "live2d-pet.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "是否启用 Live2D 桌宠"
+            "description": "是否显示 Live2D 桌宠（修改此项可切换显示/隐藏，桌宠被关闭时会自动重新显示）"
           },
           "live2d-pet.model": {
             "type": "string",

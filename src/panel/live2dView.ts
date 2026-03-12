@@ -1,118 +1,75 @@
 import * as vscode from "vscode";
 import * as path from "path";
-import * as fs from "fs";
 import { ModelService } from "../services/ModelService";
 
 type MessageHandler = (msg: any, context: vscode.ExtensionContext) => void;
 
 let globalMessageHandler: MessageHandler | undefined;
-let globalContext: vscode.ExtensionContext | undefined;
 
-export class Live2DPanel {
-  private static instance: Live2DPanel | undefined;
-  /** Set true before calling dispose() explicitly so the panel does NOT auto-restore. */
-  static suppressAutoRestore = false;
-  /** Fired when the user closes the panel (tab X) and suppressAutoRestore is false. */
-  static onClose: (() => void) | undefined;
+/**
+ * WebviewViewProvider — renders the Live2D pet inside a VS Code sidebar panel.
+ * The pet DOM uses `position: fixed; right: 0; bottom: 0` so it floats in the
+ * bottom-right corner of the sidebar viewport regardless of panel height.
+ */
+export class Live2DViewProvider implements vscode.WebviewViewProvider {
+  public static readonly viewType = "live2dPetView";
 
-  private panel: vscode.WebviewPanel;
-  private context: vscode.ExtensionContext;
-  private disposables: vscode.Disposable[] = [];
-  private _disposed = false;
+  private _view?: vscode.WebviewView;
+  private readonly _context: vscode.ExtensionContext;
 
-  private constructor(
-    panel: vscode.WebviewPanel,
-    context: vscode.ExtensionContext
-  ) {
-    this.panel = panel;
-    this.context = context;
+  constructor(context: vscode.ExtensionContext) {
+    this._context = context;
+  }
 
-    this.panel.webview.html = this.buildHtml();
+  /** Register the global message handler (called from extension.ts). */
+  static onDidReceiveMessage(handler: MessageHandler): void {
+    globalMessageHandler = handler;
+  }
 
-    // Handle messages from webview
-    this.panel.webview.onDidReceiveMessage(
-      (msg) => {
-        if (globalMessageHandler && globalContext) {
-          globalMessageHandler(msg, globalContext);
-        }
-      },
-      null,
-      this.disposables
-    );
+  // ── vscode.WebviewViewProvider ──────────────────────────────────────────
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _resolveContext: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this._view = webviewView;
 
-    this.panel.onDidDispose(
-      () => this.dispose(),
-      null,
-      this.disposables
-    );
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.file(path.join(this._context.extensionPath, "webview")),
+      ],
+    };
 
-    // Send initial config on load
+    webviewView.webview.html = this.buildHtml(webviewView.webview);
+
+    webviewView.webview.onDidReceiveMessage((msg) => {
+      if (globalMessageHandler) {
+        globalMessageHandler(msg, this._context);
+      }
+    });
+
+    // Send initial config once the webview has had time to load scripts.
     setTimeout(() => {
       const cfg = vscode.workspace.getConfiguration("live2d-pet");
+      const enabled = cfg.get<boolean>("enabled", true);
       this.postMessage({
         type: "init",
+        visible: enabled,
         config: this.readConfig(cfg),
         models: ModelService.getModelNames(),
         modelUrlMap: ModelService.getAllModels(),
         modelBase: ModelService.base,
       });
-    }, 1500);
+    }, 1000);
   }
 
-  static getOrCreate(context: vscode.ExtensionContext): Live2DPanel {
-    globalContext = context;
-    if (Live2DPanel.instance) {
-      try {
-        Live2DPanel.instance.panel.reveal(vscode.ViewColumn.Beside, true);
-        return Live2DPanel.instance;
-      } catch {
-        Live2DPanel.instance = undefined;
-      }
-    }
-
-    const panel = vscode.window.createWebviewPanel(
-      "live2dPet",
-      "🐾 Live2D 桌宠",
-      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.file(path.join(context.extensionPath, "webview")),
-        ],
-      }
-    );
-
-    Live2DPanel.instance = new Live2DPanel(panel, context);
-    return Live2DPanel.instance;
+  // ── Public API ──────────────────────────────────────────────────────────
+  postMessage(msg: object): void {
+    this._view?.webview.postMessage(msg);
   }
 
-  static onDidReceiveMessage(handler: MessageHandler, context: vscode.ExtensionContext) {
-    globalMessageHandler = handler;
-    globalContext = context;
-  }
-
-  postMessage(msg: object) {
-    try {
-      this.panel.webview.postMessage(msg);
-    } catch {
-      // panel disposed
-    }
-  }
-
-  dispose() {
-    if (this._disposed) return;
-    this._disposed = true;
-    Live2DPanel.instance = undefined;
-    try { this.panel.dispose(); } catch { /* already disposed */ }
-    this.disposables.forEach((d) => d.dispose());
-    this.disposables = [];
-    // Notify auto-restore handler only when not explicitly suppressed
-    if (!Live2DPanel.suppressAutoRestore && Live2DPanel.onClose) {
-      Live2DPanel.onClose();
-    }
-  }
-
+  // ── Private helpers ─────────────────────────────────────────────────────
   private readConfig(cfg: vscode.WorkspaceConfiguration) {
     return {
       model: cfg.get<string>("model", "shizuku-48"),
@@ -131,29 +88,29 @@ export class Live2DPanel {
     };
   }
 
-  private getUri(relativePath: string) {
-    return this.panel.webview.asWebviewUri(
+  private getUri(webview: vscode.Webview, relativePath: string): vscode.Uri {
+    return webview.asWebviewUri(
       vscode.Uri.file(
-        path.join(this.context.extensionPath, "webview", relativePath)
+        path.join(this._context.extensionPath, "webview", relativePath)
       )
     );
   }
 
-  private buildHtml(): string {
-    const styleUri = this.getUri("style/style.css");
-    const speechUri = this.getUri("pet/speech.js");
-    const actionsUri = this.getUri("pet/actions.js");
-    const expressionsUri = this.getUri("pet/expressions.js");
-    const dragUri = this.getUri("pet/drag.js");
-    const chatUri = this.getUri("ai/chat.js");
-    const petUri = this.getUri("pet/pet.js");
-    const pixiUri = this.getUri("runtime/pixi.min.js");
-    const live2dUri = this.getUri("runtime/live2d.min.js");
-    const live2dDisplayUri = this.getUri("runtime/live2d-display.min.js");
-    const cubismUri = this.getUri("runtime/live2dcubismcore.min.js");
+  private buildHtml(webview: vscode.Webview): string {
+    const g = (p: string) => this.getUri(webview, p);
+    const csp = webview.cspSource;
 
-    const csp = this.panel.webview.cspSource;
-
+    const styleUri        = g("style/style.css");
+    const speechUri       = g("pet/speech.js");
+    const actionsUri      = g("pet/actions.js");
+    const expressionsUri  = g("pet/expressions.js");
+    const dragUri         = g("pet/drag.js");
+    const chatUri         = g("ai/chat.js");
+    const petUri          = g("pet/pet.js");
+    const pixiUri         = g("runtime/pixi.min.js");
+    const live2dUri       = g("runtime/live2d.min.js");
+    const live2dDisplayUri= g("runtime/live2d-display.min.js");
+    const cubismUri       = g("runtime/live2dcubismcore.min.js");
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -176,7 +133,7 @@ export class Live2DPanel {
   <script src="${live2dDisplayUri}"></script>
 </head>
 <body>
-  <!-- 桌宠容器 -->
+  <!-- 桌宠容器：position:fixed 固定在 webview 视口右下角 -->
   <div id="pet-wrapper">
     <canvas id="pet-canvas"></canvas>
     <div id="speech-bubble" class="hidden">
@@ -213,9 +170,6 @@ export class Live2DPanel {
     <div id="model-list"></div>
   </div>
 
-  <!-- Live2D CDN Libraries (loaded in order) -->
-
-  <!-- Local Webview Scripts -->
   <script src="${speechUri}"></script>
   <script src="${actionsUri}"></script>
   <script src="${expressionsUri}"></script>

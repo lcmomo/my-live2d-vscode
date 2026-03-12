@@ -7,14 +7,60 @@ const SYSTEM_PROMPT = `你是一个可爱的二次元 Live2D 桌宠助手，名�
 如果主人问编程问题，你会认真解答，但也会加上一点可爱的语气。
 回复要简短，不超过100字。`;
 
+const SELECTED_MODEL_KEY = "live2d.selectedModelId";
+const defaultCHAT_MODEL = "gpt-4.1";
+/** Approximate Copilot token-multiplier labels, matched by keywords in model id/family/name. */
+function getModelMultiplier(model: vscode.LanguageModelChat): string {
+  const key = `${model.id} ${model.family} ${model.name}`.toLowerCase();
+  if (/opus/.test(key)) { return "3x"; }
+  if (/haiku/.test(key) || /flash/.test(key)) { return "0.33x"; }
+  if (/mini/.test(key) && !/gemini/.test(key)) { return "0x (free)"; }
+  if (/gpt-4\.1(?!.*mini)/.test(key)) { return "0x (free)"; }
+  return "1x";
+}
+
 export class ChatService {
+  /** Show a QuickPick listing all available Copilot models with multipliers and persist the choice. */
+  static async selectModel(context: vscode.ExtensionContext): Promise<void> {
+    const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
+    if (!models || models.length === 0) {
+      vscode.window.showWarningMessage("没有找到可用的 Copilot 模型，请确认已登录 GitHub Copilot。");
+      return;
+    }
+
+    const currentId = context.globalState.get<string>(SELECTED_MODEL_KEY, models[0].id);
+
+    const items = models.map((m) => {
+      const multiplier = getModelMultiplier(m);
+      const isSelected = m.id === currentId;
+      return {
+        label: `${isSelected ? "$(check)" : "$(blank)"} ${m.name}`,
+        description: multiplier,
+        detail: `ID: ${m.id}  |  family: ${m.family}`,
+        modelId: m.id,
+      };
+    });
+
+    const picked = await vscode.window.showQuickPick(items, {
+      title: "选择对话模型",
+      placeHolder: "选择用于桌宠对话的 Copilot 模型",
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
+
+    if (picked) {
+      await context.globalState.update(SELECTED_MODEL_KEY, picked.modelId);
+      const m = models.find((m) => m.id === picked.modelId)!;
+      vscode.window.showInformationMessage(`已切换到 ${m.name}（${getModelMultiplier(m)}）`);
+    }
+  }
   static async chat(
     userMessage: string,
     context: vscode.ExtensionContext
   ): Promise<string> {
     // Try VS Code built-in LM API first
     try {
-      const reply = await ChatService.chatWithVSCodeLM(userMessage);
+      const reply = await ChatService.chatWithVSCodeLM(userMessage, context);
       if (reply) return reply;
     } catch {
       // fall through to OpenAI
@@ -35,18 +81,24 @@ export class ChatService {
     return ChatService.fallbackResponse(userMessage);
   }
 
-  private static async chatWithVSCodeLM(userMessage: string): Promise<string> {
+  private static async chatWithVSCodeLM(userMessage: string, context: vscode.ExtensionContext): Promise<string> {
     // VS Code 1.90+ has built-in LM API
     const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
     if (!models || models.length === 0) throw new Error("No VS Code LM model");
-
-    const model = models[0];
+    const defaultModel = models.find((m) => m.id === defaultCHAT_MODEL);
+    // Retrieve the selected model ID from global state
+    // const selectedModelId = context.globalState.get<string>(SELECTED_MODEL_KEY, '');
+    // const model = selectedModelId ? models.find((m) => m.id === selectedModelId) : defaultModel;
+    const model = defaultModel;
+    let text = "";
+    if (!model) return text || ChatService.fallbackResponse(userMessage);
     const messages = [
       vscode.LanguageModelChatMessage.User(SYSTEM_PROMPT + "\n\n用户：" + userMessage),
     ];
-
+    console.log(`Sending message to model ${model.name} (id: ${model.id}) with multiplier ${getModelMultiplier(model)}`);
+    console.log("models: ", models, model);
     const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
-    let text = "";
+    
     for await (const chunk of response.text) {
       text += chunk;
     }

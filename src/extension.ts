@@ -1,34 +1,60 @@
 import * as vscode from "vscode";
-import { Live2DPanel } from "./panel/live2dPanel";
+import { Live2DViewProvider } from "./panel/live2dView";
 import { GitService } from "./services/GitService";
 import { CodeStatsService } from "./services/CodeStatsService";
 import { ChatService } from "./services/ChatService";
+import { ModelService } from "./services/ModelService";
 
-let panel: Live2DPanel | undefined;
+let panel: Live2DViewProvider;
 
 export function activate(context: vscode.ExtensionContext) {
-  const cfg = vscode.workspace.getConfiguration("live2d-pet");
+  // ---- Register WebviewView provider (sidebar panel, persists across sessions) ----
+  const provider = new Live2DViewProvider(context);
+  panel = provider;
 
-  // Auto-start if enabled
-  if (cfg.get<boolean>("enabled", true)) {
-    panel = Live2DPanel.getOrCreate(context);
-  }
-
-  // Commands
   context.subscriptions.push(
-    vscode.commands.registerCommand("live2d.start", () => {
-      panel = Live2DPanel.getOrCreate(context);
+    vscode.window.registerWebviewViewProvider(
+      Live2DViewProvider.viewType,
+      provider,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+
+  // ---- Status bar toggle button ----
+  const statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  statusBarItem.command = "live2d.toggle";
+  statusBarItem.tooltip = "点击切换 Live2D 桌宠显示/隐藏";
+  const initialEnabled = vscode.workspace.getConfiguration("live2d-pet").get<boolean>("enabled", true);
+  updateStatusBar(statusBarItem, initialEnabled);
+  context.subscriptions.push(statusBarItem);
+
+  // ---- Commands ----
+  context.subscriptions.push(
+    vscode.commands.registerCommand("live2d.start", async () => {
+      await vscode.workspace.getConfiguration("live2d-pet").update("enabled", true, true);
+      provider.postMessage({ type: "petVisibility", visible: true });
+      // Reveal the sidebar panel so the pet becomes visible
+      await vscode.commands.executeCommand(`${Live2DViewProvider.viewType}.focus`);
+      updateStatusBar(statusBarItem, true);
     }),
 
-    vscode.commands.registerCommand("live2d.hide", () => {
-      if (panel) {
-        panel.dispose();
-        panel = undefined;
-      }
+    vscode.commands.registerCommand("live2d.hide", async () => {
+      await vscode.workspace.getConfiguration("live2d-pet").update("enabled", false, true);
+      provider.postMessage({ type: "petVisibility", visible: false });
+      updateStatusBar(statusBarItem, false);
+    }),
+
+    vscode.commands.registerCommand("live2d.toggle", () => {
+      const c = vscode.workspace.getConfiguration("live2d-pet");
+      c.update("enabled", !c.get<boolean>("enabled", true), true);
+      // Config change listener handles the actual show/hide
     }),
 
     vscode.commands.registerCommand("live2d.nextModel", () => {
-      panel?.postMessage({ type: "nextModel" });
+      provider.postMessage({ type: "nextModel" });
     }),
 
     vscode.commands.registerCommand("live2d.chat", async () => {
@@ -38,59 +64,79 @@ export function activate(context: vscode.ExtensionContext) {
       });
       if (input) {
         const response = await ChatService.chat(input, context);
-        panel?.postMessage({ type: "chat", text: input, reply: response });
+        provider.postMessage({ type: "chat", text: input, reply: response });
       }
     })
   );
 
-  // Git interactions
+  // ---- Git interactions ----
   GitService.watch(context, (event) => {
-    panel?.postMessage(event);
+    provider.postMessage(event);
   });
 
-  // Code statistics
+  // ---- Code statistics ----
   CodeStatsService.watch(context, (event) => {
-    panel?.postMessage(event);
+    provider.postMessage(event);
   });
 
-  // Build / task fail → tsukkomi
+  // ---- Build / task events ----
   context.subscriptions.push(
     vscode.tasks.onDidEndTaskProcess((e) => {
       if (e.exitCode !== 0) {
-        panel?.postMessage({
-          type: "buildFail",
-          text: getBuildFailMessage(),
-        });
+        provider.postMessage({ type: "buildFail", text: getBuildFailMessage() });
       } else if (e.exitCode === 0) {
-        panel?.postMessage({
-          type: "buildSuccess",
-          text: getBuildSuccessMessage(),
-        });
+        provider.postMessage({ type: "buildSuccess", text: getBuildSuccessMessage() });
       }
     })
   );
 
-  // Config change → hot-reload
+  // ---- Config changes → hot-reload / show-hide ----
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("live2d-pet")) {
-        const newCfg = vscode.workspace.getConfiguration("live2d-pet");
-        panel?.postMessage({ type: "configUpdate", config: getConfig(newCfg) });
+      if (!e.affectsConfiguration("live2d-pet")) return;
+
+      const cfg = vscode.workspace.getConfiguration("live2d-pet");
+
+      if (e.affectsConfiguration("live2d-pet.enabled")) {
+        const enabled = cfg.get<boolean>("enabled", true);
+        if (enabled) {
+          provider.postMessage({ type: "petVisibility", visible: true });
+          vscode.commands.executeCommand(`${Live2DViewProvider.viewType}.focus`);
+        } else {
+          provider.postMessage({ type: "petVisibility", visible: false });
+        }
+        updateStatusBar(statusBarItem, enabled);
+        return;
       }
+
+      // All other config changes → forward to webview for hot-reload
+      provider.postMessage({
+        type: "configUpdate",
+        config: getConfig(cfg),
+        models: ModelService.getModelNames(),
+        modelUrlMap: ModelService.getAllModels(),
+        modelBase: ModelService.base,
+      });
     })
   );
 
-  // Handle AI chat messages from webview
-  Live2DPanel.onDidReceiveMessage(async (msg: any, ctx: vscode.ExtensionContext) => {
+  // ---- Handle messages from webview (AI chat) ----
+  Live2DViewProvider.onDidReceiveMessage(async (msg: any, ctx: vscode.ExtensionContext) => {
     if (msg.type === "chat") {
       const reply = await ChatService.chat(msg.text, ctx);
-      panel?.postMessage({ type: "chat", text: msg.text, reply });
+      provider.postMessage({ type: "chat", text: msg.text, reply });
     }
-  }, context);
+  });
 }
 
-export function deactivate() {
-  panel?.dispose();
+export function deactivate() {}
+
+function updateStatusBar(item: vscode.StatusBarItem, visible: boolean) {
+  item.text = visible ? "$(eye) 桌宠" : "$(eye-off) 桌宠";
+  item.backgroundColor = visible
+    ? undefined
+    : new vscode.ThemeColor("statusBarItem.warningBackground");
+  item.show();
 }
 
 function getConfig(cfg: vscode.WorkspaceConfiguration) {

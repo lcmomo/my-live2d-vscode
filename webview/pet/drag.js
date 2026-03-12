@@ -16,31 +16,33 @@
 
   function onDown(e) {
     var t = e.target;
-    if (t.closest && (t.closest('#chat-panel') || t.closest('#model-picker'))) return;
+    // Don't intercept toolbar buttons, inputs, or overlay panels
+    if (t.closest && (t.closest('#chat-panel') || t.closest('#model-picker') || t.closest('#pet-toolbar'))) return;
+    if (t.tagName === 'BUTTON' || t.tagName === 'INPUT' || t.tagName === 'A') return;
     dragging = true;
     var p = getPos();
     origX = p.x; origY = p.y;
     startX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
     startY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
     wrapper.style.transition = 'none';
-    
     e.preventDefault();
   }
 
   function onMove(e) {
-    // var cx = e.clientX || (e.touches ? e.touches[0].clientX : 0);
-    // var cy = e.clientY || (e.touches ? e.touches[0].clientY : 0);
-    // var newX = origX + (cx - startX);
-    // var newY = origY + (cy - startY);
-    // var maxX = window.innerWidth  - wrapper.offsetWidth;
-    // var maxY = window.innerHeight - wrapper.offsetHeight;
-    // newX = Math.max(0, Math.min(maxX, newX));
-    // newY = Math.max(0, Math.min(maxY, newY));
-    // wrapper.style.position = 'fixed';
-    // wrapper.style.left   = newX + 'px';
-    // wrapper.style.top    = newY + 'px';
-    // wrapper.style.right  = 'auto';
-    // wrapper.style.bottom = 'auto';
+    if (!dragging) return;
+    var cx = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+    var cy = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+    var newX = origX + (cx - startX);
+    var newY = origY + (cy - startY);
+    var maxX = window.innerWidth  - wrapper.offsetWidth;
+    var maxY = window.innerHeight - wrapper.offsetHeight;
+    newX = Math.max(0, Math.min(maxX, newX));
+    newY = Math.max(0, Math.min(maxY, newY));
+    wrapper.style.position = 'fixed';
+    wrapper.style.left   = newX + 'px';
+    wrapper.style.top    = newY + 'px';
+    wrapper.style.right  = 'auto';
+    wrapper.style.bottom = 'auto';
   }
 
   function onUp(e) {

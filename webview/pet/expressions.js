@@ -19,18 +19,31 @@
     try {
       var m = window.petApp && window.petApp.model;
       if (!m) return;
+      var names = window.petApp.expressionNames;
+      if (typeof nameOrIndex === 'string' && names && names.length) {
+        // Case-insensitive match
+        var match = names.find(function(n) {
+          return n.toLowerCase() === nameOrIndex.toLowerCase();
+        });
+        if (match) { m.expression(match); return; }
+        // No match — skip
+        return;
+      }
       m.expression(nameOrIndex);
     } catch (e) { /* ignore */ }
   }
 
   function playRandom() {
-    // Also try numeric index (0..7 are common across many models)
-    if (Math.random() < 0.5) {
-      play(Math.floor(Math.random() * 8));
-    } else {
-      var expr = ALL_EXPRESSIONS[Math.floor(Math.random() * ALL_EXPRESSIONS.length)];
-      play(expr);
+    var m = window.petApp && window.petApp.model;
+    if (!m) return;
+    var names = window.petApp.expressionNames;
+    if (names && names.length) {
+      var pick = names[Math.floor(Math.random() * names.length)];
+      try { m.expression(pick); } catch(e) {}
+      return;
     }
+    // Fallback: try random index (0-7 covers most models)
+    try { m.expression(Math.floor(Math.random() * 8)); } catch(e) {}
   }
 
   window.PetExpressions = { all: ALL_EXPRESSIONS, play: play, playRandom: playRandom };
