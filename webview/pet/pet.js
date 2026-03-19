@@ -159,15 +159,29 @@
 
       // Extract real motion groups & expression names for accurate playback
       try {
-        var settings = model.internalModel && model.internalModel.modelSettings;
-        if (settings) {
-          var motionObj = settings.Motions || settings.motions || {};
-          window.petApp.motionGroups = Object.keys(motionObj);
-          var exprArr = settings.Expressions || settings.expressions || [];
-          window.petApp.expressionNames = exprArr.map(function(e) { return e.Name || e.name || ''; }).filter(Boolean);
-          console.log('[PetJS] Motion groups:', window.petApp.motionGroups);
-          console.log('[PetJS] Expressions:', window.petApp.expressionNames);
+        var internalModel = model.internalModel;
+        // pixi-live2d-display uses .settings (not .modelSettings)
+        var settings = internalModel && (internalModel.settings || internalModel.modelSettings);
+        var motionGroups = [];
+
+        // Primary: read from motionManager.definitions (most reliable across versions)
+        if (internalModel && internalModel.motionManager) {
+          var defs = internalModel.motionManager.definitions;
+          if (defs && typeof defs === 'object' && !Array.isArray(defs)) {
+            motionGroups = Object.keys(defs);
+          }
         }
+        // Fallback: read from settings.Motions
+        if (!motionGroups.length && settings) {
+          var motionObj = settings.Motions || settings.motions || {};
+          motionGroups = Object.keys(motionObj);
+        }
+        window.petApp.motionGroups = motionGroups;
+
+        var exprArr = (settings && (settings.Expressions || settings.expressions)) || [];
+        window.petApp.expressionNames = exprArr.map(function(e) { return e.Name || e.name || ''; }).filter(Boolean);
+        console.log('[PetJS] Motion groups:', window.petApp.motionGroups);
+        console.log('[PetJS] Expressions:', window.petApp.expressionNames);
       } catch(ex) {
         window.petApp.motionGroups = [];
         window.petApp.expressionNames = [];

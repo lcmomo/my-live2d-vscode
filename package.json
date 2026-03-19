@@ -155,12 +155,17 @@
       }
     ]
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lcmomo/my-live2d-vscode.git"
+  },
   "scripts": {
     "vscode:prepublish": "yarn compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "build": "tsc",
-    "package": "npx vsce package"
+    "package": "npx vsce package",
+    "prepublish": "yarn build && yarn package"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

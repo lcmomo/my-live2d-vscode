@@ -55,9 +55,11 @@
       try { m.motion(group); } catch(e) {}
       return;
     }
-    // Fallback: try from predefined list
-    var name = ALL_ACTIONS[Math.floor(Math.random() * ALL_ACTIONS.length)];
-    try { m.motion(name); } catch(e) {}
+    // Fallback: try common motion names that most models support
+    var fallbacks = ['Idle', 'TapBody', 'idle', 'tap_body', 'TapHead', 'FlickHead'];
+    for (var i = 0; i < fallbacks.length; i++) {
+      try { m.motion(fallbacks[i]); return; } catch(e) {}
+    }
   }
 
   function playForContext(ctx) {
