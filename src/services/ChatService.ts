@@ -5,7 +5,9 @@ const SYSTEM_PROMPT = `你是一个可爱的二次元 Live2D 桌宠助手，名�
 你的性格：活泼、可爱、关心主人、偶尔卖萌。
 你喜欢用颜文字和emoji。
 如果主人问编程问题，你会认真解答，但也会加上一点可爱的语气。
-回复要简短，不超过100字。`;
+当你不知道怎么回答时，可以说一些鼓励的话或者卖萌的话来陪伴主人。
+你会根据主人的话题切换不同的表情和动作。
+无论主人说什么，你都会积极回应，努力让主人开心！`;
 
 const SELECTED_MODEL_KEY = "live2d.selectedModelId";
 const defaultCHAT_MODEL = "gpt-4.1";
@@ -20,6 +22,13 @@ function getModelMultiplier(model: vscode.LanguageModelChat): string {
 }
 
 export class ChatService {
+  private static conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+  private static readonly MAX_HISTORY_TURNS = 10; // keep last 10 turns (20 messages)
+
+  static clearHistory(): void {
+    ChatService.conversationHistory = [];
+  }
+
   /** Show a QuickPick listing all available Copilot models with multipliers and persist the choice. */
   static async selectModel(context: vscode.ExtensionContext): Promise<void> {
     const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
@@ -86,23 +95,41 @@ export class ChatService {
     const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
     if (!models || models.length === 0) throw new Error("No VS Code LM model");
     const defaultModel = models.find((m) => m.id === defaultCHAT_MODEL);
-    // Retrieve the selected model ID from global state
-    // const selectedModelId = context.globalState.get<string>(SELECTED_MODEL_KEY, '');
-    // const model = selectedModelId ? models.find((m) => m.id === selectedModelId) : defaultModel;
     const model = defaultModel;
-    let text = "";
-    if (!model) return text || ChatService.fallbackResponse(userMessage);
-    const messages = [
-      vscode.LanguageModelChatMessage.User(SYSTEM_PROMPT + "\n\n用户：" + userMessage),
+    if (!model) return ChatService.fallbackResponse(userMessage);
+
+    // Trim history to MAX_HISTORY_TURNS turns (each turn = 2 messages)
+    const maxMessages = ChatService.MAX_HISTORY_TURNS * 2;
+    if (ChatService.conversationHistory.length > maxMessages) {
+      ChatService.conversationHistory = ChatService.conversationHistory.slice(-maxMessages);
+    }
+
+    // Build full message list: system prompt, conversation history, current user message
+    const messages: vscode.LanguageModelChatMessage[] = [
+      vscode.LanguageModelChatMessage.User(SYSTEM_PROMPT),
+      ...ChatService.conversationHistory.map((m) =>
+        m.role === "user"
+          ? vscode.LanguageModelChatMessage.User(m.content)
+          : vscode.LanguageModelChatMessage.Assistant(m.content)
+      ),
+      vscode.LanguageModelChatMessage.User(userMessage),
     ];
-    console.log(`Sending message to model ${model.name} (id: ${model.id}) with multiplier ${getModelMultiplier(model)}`);
-    console.log("models: ", models, model);
+
+    console.log(`Sending message to model ${model.name} (id: ${model.id}) with multiplier ${getModelMultiplier(model)}, history length: ${ChatService.conversationHistory.length}`);
     const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
-    
+
+    let text = "";
     for await (const chunk of response.text) {
       text += chunk;
     }
-    return text || ChatService.fallbackResponse(userMessage);
+
+    const reply = text || ChatService.fallbackResponse(userMessage);
+
+    // Persist this turn into history
+    ChatService.conversationHistory.push({ role: "user", content: userMessage });
+    ChatService.conversationHistory.push({ role: "assistant", content: reply });
+
+    return reply;
   }
 
   private static chatWithOpenAI(userMessage: string, apiKey: string): Promise<string> {
